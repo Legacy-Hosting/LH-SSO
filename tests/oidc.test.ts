@@ -24,6 +24,9 @@ function runtime(issuer = "http://127.0.0.1"): OidcRuntimeConfig {
       {
         client_id: "test-client",
         redirect_uris: ["https://client.example/callback"],
+        post_logout_redirect_uris: ["https://client.example/"],
+        backchannel_logout_uri: "https://client.example/backchannel-logout",
+        backchannel_logout_session_required: true,
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",
@@ -101,6 +104,24 @@ test("production OIDC configuration rejects unsafe redirects and unknown resourc
     }),
     /unknown lh_resource/,
   );
+  assert.throws(
+    () => parseOidcRuntimeConfig({
+      ...base,
+      clientsJson: JSON.stringify([
+        {
+          client_id: "unsafe-logout-client",
+          redirect_uris: ["https://panel.legacyhosting.xyz/callback"],
+          backchannel_logout_uri: "http://api.legacyhosting.xyz/logout",
+          backchannel_logout_session_required: true,
+          grant_types: ["authorization_code"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+          lh_resource: "https://api.legacyhosting.xyz",
+        },
+      ]),
+    }),
+    /must use HTTPS/,
+  );
 });
 
 test("Authorization Code Flow requires PKCE and issues a short-lived role token", async () => {
@@ -161,6 +182,13 @@ test("Authorization Code Flow requires PKCE and issues a short-lived role token"
   }
 
   try {
+    const discovery = await request(`${origin}/.well-known/openid-configuration`);
+    assert.equal(discovery.status, 200);
+    const metadata = await discovery.json() as Record<string, unknown>;
+    assert.equal(metadata.end_session_endpoint, `${origin}/session/end`);
+    assert.equal(metadata.backchannel_logout_supported, true);
+    assert.equal(metadata.backchannel_logout_session_supported, true);
+
     const missingPkce = new URL("/auth", origin);
     missingPkce.search = new URLSearchParams({
       client_id: "test-client",

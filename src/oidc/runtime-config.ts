@@ -12,6 +12,8 @@ const clientSchema = z
     client_name: z.string().min(1).max(100).optional(),
     redirect_uris: z.array(absoluteUrl).min(1).max(10),
     post_logout_redirect_uris: z.array(absoluteUrl).max(10).optional(),
+    backchannel_logout_uri: absoluteUrl.optional(),
+    backchannel_logout_session_required: z.boolean().optional(),
     grant_types: z
       .array(z.enum(["authorization_code", "refresh_token"]))
       .min(1)
@@ -34,6 +36,13 @@ const clientSchema = z
         code: "custom",
         path: ["client_secret"],
         message: "public clients must not have a client secret",
+      });
+    }
+    if (client.backchannel_logout_session_required && !client.backchannel_logout_uri) {
+      context.addIssue({
+        code: "custom",
+        path: ["backchannel_logout_uri"],
+        message: "backchannel logout session tracking requires a logout URI",
       });
     }
   });
@@ -145,7 +154,11 @@ export function parseOidcRuntimeConfig(input: {
 
   for (const client of parsedClients) {
     assertRedirectSecurity(
-      [...client.redirect_uris, ...(client.post_logout_redirect_uris ?? [])],
+      [
+        ...client.redirect_uris,
+        ...(client.post_logout_redirect_uris ?? []),
+        ...(client.backchannel_logout_uri ? [client.backchannel_logout_uri] : []),
+      ],
       input.production,
     );
     if (!resources.has(client.lh_resource)) {

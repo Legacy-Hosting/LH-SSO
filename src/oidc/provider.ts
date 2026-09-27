@@ -48,6 +48,7 @@ export function createOidcProvider(runtime: OidcRuntimeConfig, options: Provider
       devInteractions: { enabled: false },
       userinfo: { enabled: true },
       revocation: { enabled: true },
+      backchannelLogout: { enabled: true },
       resourceIndicators: {
         enabled: true,
         getResourceServerInfo(_context, identifier, client) {

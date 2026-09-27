@@ -8,6 +8,8 @@ Use a separate `legacyhosting_sso` database on the existing Managed MySQL cluste
 
 The OIDC server supports only Authorization Code Flow, requires PKCE for every client, uses short-lived signed access/ID tokens, rotates refresh tokens, and persists protocol state in MySQL. Clients and resource audiences are statically allowlisted; dynamic registration is disabled. Signing keys are loaded from a protected private JWKS file and the first key is active. Prepend a new key while retaining prior public keys during rotation.
 
+RP-initiated logout is enabled for browser sign-out. Each confidential client has an allowlisted post-logout redirect and HTTPS back-channel logout URI. SSO signs logout tokens with the same ES256 key set so API and Hub can validate the issuer, audience, event, age, and subject before revoking their own sessions.
+
 The confidential `lh-panel` client redirects to the LH-API callback, not to the static Panel bundle. API performs the code exchange and ID-token validation server-side, then creates a normal HttpOnly Panel session and redirects the browser back to Panel.
 
 The existing Panel login remains authoritative during the migration window. When OIDC requests authentication, SSO redirects the browser to `OIDC_LEGACY_LOGIN_URL` with `sso_interaction` and `sso_completion_uri`. After authenticating the current user, the trusted Panel backend must:
