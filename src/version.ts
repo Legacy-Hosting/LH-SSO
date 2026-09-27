@@ -1,1 +1,12 @@
-export const SSO_VERSION = "1.3.1";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const metadata = JSON.parse(
+  readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
+) as { version?: unknown };
+
+if (typeof metadata.version !== "string" || !/^\d+\.\d+\.\d+/.test(metadata.version)) {
+  throw new Error("LH-SSO package version is invalid");
+}
+
+export const SSO_VERSION = metadata.version;

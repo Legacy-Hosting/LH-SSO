@@ -6,6 +6,28 @@ import { createApp } from "../src/app.js";
 const internalToken = "i".repeat(32);
 const bridgeToken = "b".repeat(32);
 
+test("identity landing page and social assets are public without exposing configuration", async () => {
+  const app = createApp({ internalToken });
+  try {
+    const page = await app.inject({ method: "GET", url: "/" });
+    assert.equal(page.statusCode, 200);
+    assert.match(page.headers["content-type"] ?? "", /text\/html/);
+    assert.match(page.body, /Legacy Hosting Identity/);
+    assert.match(page.body, /property="og:image"/);
+    assert.match(page.body, /name="twitter:card" content="summary_large_image"/);
+
+    const favicon = await app.inject({ method: "GET", url: "/favicon.svg" });
+    assert.equal(favicon.statusCode, 200);
+    assert.match(favicon.headers["content-type"] ?? "", /image\/svg\+xml/);
+
+    const socialCard = await app.inject({ method: "GET", url: "/social-card.png" });
+    assert.equal(socialCard.statusCode, 200);
+    assert.match(socialCard.headers["content-type"] ?? "", /image\/png/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("readiness returns 503 when the database dependency is unavailable", async () => {
   const app = createApp({
     internalToken,

@@ -4,6 +4,23 @@ export function renderDiscordLinkPage() {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b0c10">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Securely connect your Discord account to Legacy Hosting.">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <link rel="canonical" href="https://auth.legacyhosting.xyz/discord/link">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Legacy Hosting">
+  <meta property="og:title" content="Connect Discord · Legacy Hosting">
+  <meta property="og:description" content="Passkey-protected Discord account linking for Legacy Hosting staff.">
+  <meta property="og:url" content="https://auth.legacyhosting.xyz/discord/link">
+  <meta property="og:image" content="https://auth.legacyhosting.xyz/social-card.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://auth.legacyhosting.xyz/social-card.png">
   <title>Connect Discord · Legacy Hosting</title>
   <link rel="stylesheet" href="/assets/discord-link.css">
   <script type="module" src="/assets/discord-link.js"></script>
@@ -31,13 +48,14 @@ export function renderDiscordLinkPage() {
 }
 
 export const discordLinkPageCss = `
-:root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0b0c10; color: #f3f3f7; }
+@import url("/fonts/fonts.css");
+:root { color-scheme: dark; font-family: "DM Sans", sans-serif; background: #0b0c10; color: #e9eaf2; --border: #25262f; --muted: #858795; --surface: #131419; --purple: #7561ff; }
 * { box-sizing: border-box; }
 body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: radial-gradient(circle at 50% 0%, #211d3b 0, #0b0c10 42%); }
-.link-card { width: min(460px, 100%); padding: 38px; border: 1px solid #292a33; border-radius: 16px; background: #13141a; box-shadow: 0 30px 90px rgba(0,0,0,.36); }
-.mark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: #7157f6; font-weight: 800; font-size: 20px; }
+.link-card { width: min(460px, 100%); padding: 38px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 30px 90px rgba(0,0,0,.36); }
+.mark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: var(--purple); font-family: "Space Grotesk", sans-serif; font-weight: 700; font-size: 20px; }
 .eyebrow { margin: 24px 0 8px; color: #a99aff; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
-h1 { margin: 0; font-size: 28px; letter-spacing: -.03em; }
+h1 { margin: 0; font-family: "Space Grotesk", sans-serif; font-size: 28px; letter-spacing: -.03em; }
 .intro { margin: 10px 0 27px; color: #999baa; line-height: 1.55; font-size: 14px; }
 form { display: grid; gap: 12px; }
 label { font-size: 12px; font-weight: 650; }
@@ -45,7 +63,7 @@ label span { float: right; color: #737583; font-weight: 400; }
 input, button { width: 100%; min-height: 46px; border-radius: 9px; font: inherit; }
 input { padding: 0 13px; color: #f3f3f7; border: 1px solid #30313b; background: #0d0e13; outline: none; }
 input:focus { border-color: #806cff; box-shadow: 0 0 0 3px rgba(128,108,255,.15); }
-button { margin-top: 7px; border: 0; color: white; background: #7157f6; font-weight: 700; cursor: pointer; }
+button { margin-top: 7px; border: 0; color: white; background: var(--purple); font-weight: 700; cursor: pointer; }
 button:disabled { cursor: wait; opacity: .7; }
 .error, .success { margin: 18px 0 0; padding: 13px 14px; border-radius: 9px; font-size: 12px; line-height: 1.45; }
 .error { border: 1px solid rgba(239,92,105,.38); color: #ffafb6; background: rgba(239,92,105,.09); }
