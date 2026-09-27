@@ -6,6 +6,17 @@ import type Provider from "oidc-provider";
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { z } from "zod";
 import { databaseStatus } from "./database/mysql.js";
+import {
+  completeDiscordLink,
+  discordLinkInteractionUid,
+  inspectDiscordLinkTicket,
+  issueDiscordLinkTicket,
+} from "./discord-link.js";
+import {
+  discordLinkPageCss,
+  discordLinkPageJavaScript,
+  renderDiscordLinkPage,
+} from "./discord-link-page.js";
 import { discordRoleSyncBody, syncDiscordRoles } from "./discord-role-sync.js";
 import { validInternalBearer } from "./internal-auth.js";
 import {
@@ -40,6 +51,11 @@ type AppOptions = {
     begin: typeof beginPasskeyAuthentication;
     finish: typeof finishPasskeyAuthentication;
   };
+  discordLinks?: {
+    issue: typeof issueDiscordLinkTicket;
+    inspect: typeof inspectDiscordLinkTicket;
+    complete: typeof completeDiscordLink;
+  };
 };
 
 const interactionParams = {
@@ -62,6 +78,45 @@ const passkeyVerifyBody = z.object({
   challengeId: z.string().uuid(),
   response: passkeyResponse,
 });
+const discordLinkTicket = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
+const discordLinkTicketBody = z.object({
+  discordUserId: z.string().regex(/^\d{17,20}$/),
+  discordGuildId: z.string().regex(/^\d{17,20}$/),
+});
+const discordLinkPasskeyOptionsBody = z.object({
+  ticket: discordLinkTicket,
+  email: z.string().trim().email().max(320).optional(),
+});
+const discordLinkPasskeyVerifyBody = z.object({
+  ticket: discordLinkTicket,
+  challengeId: z.string().uuid(),
+  response: passkeyResponse,
+});
+
+const passkeyAuthenticationErrors = new Set([
+  "invalid_or_expired_challenge",
+  "unknown_passkey",
+  "passkey_verification_failed",
+  "passkey_counter_changed",
+]);
+
+function requestHasExpectedOrigin(origin: string | undefined, issuer: string | undefined) {
+  if (!origin || !issuer) return false;
+  try {
+    return new URL(origin).origin === new URL(issuer).origin;
+  } catch {
+    return false;
+  }
+}
+
+function protectDiscordLinkPage(reply: { header(name: string, value: string): unknown }) {
+  reply.header("Cache-Control", "no-store");
+  reply.header("Referrer-Policy", "no-referrer");
+  reply.header(
+    "Content-Security-Policy",
+    "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  );
+}
 
 function stringArray(value: unknown) {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string")
@@ -84,9 +139,19 @@ export function createApp(options: AppOptions) {
   void app.register(formbody);
   void app.register(rateLimit, { max: 120, timeWindow: 60_000 });
 
+  const passkeys = options.passkeys ?? {
+    begin: beginPasskeyAuthentication,
+    finish: finishPasskeyAuthentication,
+  };
+  const discordLinks = options.discordLinks ?? {
+    issue: issueDiscordLinkTicket,
+    inspect: inspectDiscordLinkTicket,
+    complete: completeDiscordLink,
+  };
+
   app.get("/", async () => ({
     service: "LH-SSO",
-    version: "1.2.2",
+    version: "1.3.0",
     status: "operational",
   }));
 
@@ -107,6 +172,14 @@ export function createApp(options: AppOptions) {
     .header("Cache-Control", "public, max-age=300")
     .type("text/javascript; charset=utf-8")
     .send(loginPageJavaScript));
+  app.get("/assets/discord-link.css", async (_request, reply) => reply
+    .header("Cache-Control", "public, max-age=300")
+    .type("text/css; charset=utf-8")
+    .send(discordLinkPageCss));
+  app.get("/assets/discord-link.js", async (_request, reply) => reply
+    .header("Cache-Control", "public, max-age=300")
+    .type("text/javascript; charset=utf-8")
+    .send(discordLinkPageJavaScript));
 
   app.post("/internal/discord/role-sync", async (request, reply) => {
     if (!validInternalBearer(request.headers.authorization, options.internalToken)) {
@@ -120,6 +193,101 @@ export function createApp(options: AppOptions) {
     return reply.status(202).send({ data: result });
   });
 
+  app.post("/internal/discord/link-tickets", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    if (!validInternalBearer(request.headers.authorization, options.internalToken)) {
+      return reply.status(401).send({ error: "invalid_internal_token" });
+    }
+    if (!options.oidcIssuer) return reply.status(503).send({ error: "identity_service_unavailable" });
+    const body = discordLinkTicketBody.safeParse(request.body);
+    if (!body.success) return reply.status(400).send({ error: "validation_error" });
+    try {
+      const issued = await discordLinks.issue(body.data);
+      return reply.status(201).send({
+        data: {
+          linkUrl: `${options.oidcIssuer}/discord/link#ticket=${encodeURIComponent(issued.ticket)}`,
+          expiresIn: issued.expiresIn,
+        },
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "discord_staff_role_required") {
+        return reply.status(409).send({ error: "discord_staff_role_required" });
+      }
+      throw error;
+    }
+  });
+
+  app.get("/discord/link", async (_request, reply) => {
+    protectDiscordLinkPage(reply);
+    return reply.type("text/html; charset=utf-8").send(renderDiscordLinkPage());
+  });
+
+  app.post(
+    "/discord/link/passkey/options",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      if (!requestHasExpectedOrigin(request.headers.origin, options.oidcIssuer)) {
+        return reply.status(403).send({ error: "invalid_origin" });
+      }
+      const body = discordLinkPasskeyOptionsBody.safeParse(request.body);
+      if (!body.success) return reply.status(400).send({ error: "validation_error" });
+      const link = await discordLinks.inspect(body.data.ticket);
+      if (!link) return reply.status(410).send({ error: "invalid_or_expired_link" });
+      try {
+        return {
+          data: await passkeys.begin(discordLinkInteractionUid(link.id), body.data.email),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "authentication_failed";
+        if (["account_not_found", "passkey_not_registered"].includes(message)) {
+          return reply.status(400).send({ error: "authentication_failed" });
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.post(
+    "/discord/link/passkey/verify",
+    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
+    async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      if (!requestHasExpectedOrigin(request.headers.origin, options.oidcIssuer)) {
+        return reply.status(403).send({ error: "invalid_origin" });
+      }
+      const body = discordLinkPasskeyVerifyBody.safeParse(request.body);
+      if (!body.success) return reply.status(400).send({ error: "validation_error" });
+      const link = await discordLinks.inspect(body.data.ticket);
+      if (!link) return reply.status(410).send({ error: "invalid_or_expired_link" });
+      try {
+        const authentication = await passkeys.finish({
+          interactionUid: discordLinkInteractionUid(link.id),
+          challengeId: body.data.challengeId,
+          response: body.data.response as unknown as AuthenticationResponseJSON,
+        });
+        return {
+          data: await discordLinks.complete(body.data.ticket, authentication.subject),
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "authentication_failed";
+        if (passkeyAuthenticationErrors.has(message) || message === "account_not_found") {
+          return reply.status(401).send({ error: "authentication_failed" });
+        }
+        if (message === "invalid_or_expired_discord_link") {
+          return reply.status(410).send({ error: "invalid_or_expired_link" });
+        }
+        if (["discord_identity_already_linked", "sso_account_already_linked"].includes(message)) {
+          return reply.status(409).send({ error: "discord_link_conflict" });
+        }
+        if (message === "discord_staff_role_required") {
+          return reply.status(403).send({ error: "discord_staff_role_required" });
+        }
+        throw error;
+      }
+    },
+  );
+
   if (
     options.oidcProvider &&
     options.oidcIssuer &&
@@ -131,10 +299,6 @@ export function createApp(options: AppOptions) {
       provision: provisionLegacyUser,
       issue: issueLoginTicket,
       consume: consumeLoginTicket,
-    };
-    const passkeys = options.passkeys ?? {
-      begin: beginPasskeyAuthentication,
-      finish: finishPasskeyAuthentication,
     };
     const loginMode = options.loginMode ?? "legacy_bridge";
 
@@ -286,12 +450,7 @@ export function createApp(options: AppOptions) {
           };
         } catch (error) {
           const message = error instanceof Error ? error.message : "authentication_failed";
-          if ([
-            "invalid_or_expired_challenge",
-            "unknown_passkey",
-            "passkey_verification_failed",
-            "passkey_counter_changed",
-          ].includes(message)) {
+          if (passkeyAuthenticationErrors.has(message)) {
             return reply.status(401).send({ error: "authentication_failed" });
           }
           throw error;

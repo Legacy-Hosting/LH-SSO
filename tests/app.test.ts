@@ -158,3 +158,108 @@ test("passkey mode serves a same-origin login and issues a passkey-bound ticket"
     await app.close();
   }
 });
+
+test("Discord account linking is internal to issue and passkey-protected to complete", async () => {
+  const ticket = "d".repeat(43);
+  const linkId = "123e4567-e89b-12d3-a456-426614174111";
+  let completedSubject = "";
+  const app = createApp({
+    internalToken,
+    oidcIssuer: "https://auth.legacyhosting.xyz",
+    discordLinks: {
+      issue: async () => ({ ticket, expiresIn: 600 }),
+      inspect: async (candidate) => candidate === ticket
+        ? ({ id: linkId, discordUserId: "92345678901234567", discordGuildId: "82345678901234567" } as never)
+        : undefined,
+      complete: async (_ticket, subject) => {
+        completedSubject = subject;
+        return { discordUserId: "92345678901234567", staffRoles: ["developer"] };
+      },
+    },
+    passkeys: {
+      begin: async (interactionUid) => {
+        assert.equal(interactionUid, "discord_link_123e4567e89b12d3a456426614174111");
+        return {
+          challengeId: "123e4567-e89b-12d3-a456-426614174222",
+          options: { challenge: "c".repeat(43) },
+        } as never;
+      },
+      finish: async (input) => {
+        assert.equal(input.interactionUid, "discord_link_123e4567e89b12d3a456426614174111");
+        return { subject: "123e4567-e89b-12d3-a456-426614174000" };
+      },
+    },
+  });
+  try {
+    const unauthorized = await app.inject({
+      method: "POST",
+      url: "/internal/discord/link-tickets",
+      payload: {
+        discordUserId: "92345678901234567",
+        discordGuildId: "82345678901234567",
+      },
+    });
+    assert.equal(unauthorized.statusCode, 401);
+
+    const issued = await app.inject({
+      method: "POST",
+      url: "/internal/discord/link-tickets",
+      headers: { authorization: `Bearer ${internalToken}` },
+      payload: {
+        discordUserId: "92345678901234567",
+        discordGuildId: "82345678901234567",
+      },
+    });
+    assert.equal(issued.statusCode, 201, issued.body);
+    assert.equal(
+      issued.json().data.linkUrl,
+      `https://auth.legacyhosting.xyz/discord/link#ticket=${ticket}`,
+    );
+
+    const page = await app.inject({ method: "GET", url: "/discord/link" });
+    assert.equal(page.statusCode, 200);
+    assert.match(page.headers["content-security-policy"] ?? "", /default-src 'none'/);
+    assert.equal(page.headers["referrer-policy"], "no-referrer");
+    assert.doesNotMatch(page.body, new RegExp(ticket));
+
+    const invalidOrigin = await app.inject({
+      method: "POST",
+      url: "/discord/link/passkey/options",
+      headers: { origin: "https://attacker.example" },
+      payload: { ticket },
+    });
+    assert.equal(invalidOrigin.statusCode, 403);
+
+    const started = await app.inject({
+      method: "POST",
+      url: "/discord/link/passkey/options",
+      headers: { origin: "https://auth.legacyhosting.xyz" },
+      payload: { ticket },
+    });
+    assert.equal(started.statusCode, 200, started.body);
+
+    const verified = await app.inject({
+      method: "POST",
+      url: "/discord/link/passkey/verify",
+      headers: { origin: "https://auth.legacyhosting.xyz" },
+      payload: {
+        ticket,
+        challengeId: "123e4567-e89b-12d3-a456-426614174222",
+        response: { id: "credential" },
+      },
+    });
+    assert.equal(verified.statusCode, 200, verified.body);
+    assert.equal(completedSubject, "123e4567-e89b-12d3-a456-426614174000");
+    assert.deepEqual(verified.json().data.staffRoles, ["developer"]);
+
+    const expired = await app.inject({
+      method: "POST",
+      url: "/discord/link/passkey/options",
+      headers: { origin: "https://auth.legacyhosting.xyz" },
+      payload: { ticket: "x".repeat(43) },
+    });
+    assert.equal(expired.statusCode, 410);
+  } finally {
+    await app.close();
+  }
+});

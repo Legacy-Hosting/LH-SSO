@@ -1,4 +1,4 @@
-import type { RowDataPacket } from "mysql2";
+import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { z } from "zod";
 import { database } from "./database/mysql.js";
 
@@ -20,16 +20,39 @@ export const discordRoleSyncBody = z.object({
 
 export type DiscordRoleSync = z.infer<typeof discordRoleSyncBody>;
 
+export function normalizedStaffRoles(input: unknown) {
+  return z.array(z.enum(staffRoles)).max(staffRoles.length).parse(input)
+    .filter((role, index, roles) => roles.indexOf(role) === index);
+}
+
+export async function applyDiscordRoles(
+  connection: PoolConnection,
+  userId: string,
+  roles: readonly (typeof staffRoles)[number][],
+) {
+  await connection.execute(
+    "DELETE FROM sso_user_roles WHERE user_id=UUID_TO_BIN(?) AND source='discord'",
+    [userId],
+  );
+  for (const role of normalizedStaffRoles(roles)) {
+    await connection.execute(
+      "INSERT INTO sso_user_roles (user_id,role_key,source) VALUES (UUID_TO_BIN(?),?,'discord')",
+      [userId, role],
+    );
+  }
+}
+
 export async function syncDiscordRoles(sync: DiscordRoleSync) {
   const connection = await database().getConnection();
   try {
     await connection.beginTransaction();
+    const roles = normalizedStaffRoles(sync.staffRoles);
     await connection.execute(
       `INSERT INTO discord_role_syncs (discord_user_id,discord_guild_id,staff_roles)
        VALUES (?,?,?) AS incoming
        ON DUPLICATE KEY UPDATE discord_guild_id=incoming.discord_guild_id,
          staff_roles=incoming.staff_roles,updated_at=CURRENT_TIMESTAMP(3)`,
-      [sync.discordUserId, sync.discordGuildId, JSON.stringify(sync.staffRoles)],
+      [sync.discordUserId, sync.discordGuildId, JSON.stringify(roles)],
     );
     const [identities] = await connection.query<(RowDataPacket & { userId: string })[]>(
       `SELECT BIN_TO_UUID(user_id) AS userId FROM sso_identities
@@ -37,20 +60,9 @@ export async function syncDiscordRoles(sync: DiscordRoleSync) {
       [sync.discordUserId],
     );
     const userId = identities[0]?.userId;
-    if (userId) {
-      await connection.execute(
-        "DELETE FROM sso_user_roles WHERE user_id=UUID_TO_BIN(?) AND source='discord'",
-        [userId],
-      );
-      for (const role of [...new Set(sync.staffRoles)]) {
-        await connection.execute(
-          "INSERT INTO sso_user_roles (user_id,role_key,source) VALUES (UUID_TO_BIN(?),?,'discord')",
-          [userId, role],
-        );
-      }
-    }
+    if (userId) await applyDiscordRoles(connection, userId, roles);
     await connection.commit();
-    return { linked: Boolean(userId), staffRoles: [...new Set(sync.staffRoles)] };
+    return { linked: Boolean(userId), staffRoles: roles };
   } catch (error) {
     await connection.rollback();
     throw error;

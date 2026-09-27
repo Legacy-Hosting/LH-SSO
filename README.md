@@ -4,6 +4,10 @@ Central identity authority for Legacy Hosting services. This repository owns the
 
 `LH-SSO` is the final source of truth for staff authorization. Discord supplies role assignments by immutable role ID, but Discord roles are not trusted directly by Hub, Panel, API, or Status.
 
+Staff members explicitly connect Discord with `/lh-link` in the Legacy Hosting Discord server. `LH-Discord` first synchronizes the member's allowlisted staff roles, then requests a ten-minute, single-use link through the VPC-only `/internal/discord/link-tickets` endpoint. The returned secret stays in the URL fragment so it is not sent in HTTP request URLs, access logs, or referrers. SSO stores only its SHA-256 hash.
+
+The browser completes the link on `auth.legacyhosting.xyz` using an existing SSO passkey with required user verification. SSO never links accounts from Discord display names or email addresses. A Discord identity can belong to only one SSO account, an SSO account can have only one Discord identity, and the latest synchronized role state is checked again inside the completion transaction. Completed ticket rows retain the immutable Discord ID, linked SSO user ID, and timestamps as the connection audit record.
+
 Use a separate `legacyhosting_sso` database on the existing Managed MySQL cluster. Only the API and SSO Droplets should be trusted database sources; the public Panel, Hub, Status, and Discord processes must use service APIs instead of direct database connections.
 
 The OIDC server supports only Authorization Code Flow, requires PKCE for every client, uses short-lived signed access/ID tokens, rotates refresh tokens, and persists protocol state in MySQL. Clients and resource audiences are statically allowlisted; dynamic registration is disabled. Signing keys are loaded from a protected private JWKS file and the first key is active. Prepend a new key while retaining prior public keys during rotation.
