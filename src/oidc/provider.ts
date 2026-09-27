@@ -87,7 +87,15 @@ export function createOidcProvider(runtime: OidcRuntimeConfig, options: Provider
         : undefined;
       if (!accountId) return undefined;
       const claims = await claimsForSubject(accountId);
-      return claims ? { roles: claims.roles } : undefined;
+      return claims
+        ? {
+            name: claims.name,
+            ...(claims.email
+              ? { email: claims.email, email_verified: claims.email_verified }
+              : {}),
+            roles: claims.roles,
+          }
+        : undefined;
     },
     cookies: {
       keys: runtime.cookieKeys,

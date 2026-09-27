@@ -314,6 +314,7 @@ test("Authorization Code Flow requires PKCE and issues a short-lived role token"
       Buffer.from(String(tokens.access_token).split(".")[1]!, "base64url").toString("utf8"),
     ) as Record<string, unknown>;
     assert.equal(accessPayload.aud, "lh-hub");
+    assert.equal(accessPayload.name, "Test User");
     assert.deepEqual(accessPayload.roles, ["developer"]);
   } finally {
     await new Promise<void>((resolve, reject) => {

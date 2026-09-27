@@ -17,6 +17,7 @@ type LegacyPasskey = RowDataPacket & {
   deviceName: string | null;
   createdAt: Date;
   lastUsedAt: Date | null;
+  isPlatformAdmin: number;
 };
 
 function required(value: string | undefined, name: string) {
@@ -75,6 +76,7 @@ async function migrate() {
   try {
     const [passkeys] = await source.query<LegacyPasskey[]>(
       `SELECT BIN_TO_UUID(u.id) AS subject,u.email,u.display_name AS displayName,
+              u.is_platform_admin AS isPlatformAdmin,
               p.webauthn_user_id AS webauthnUserId,p.credential_id AS credentialId,
               p.public_key AS publicKey,p.counter,p.device_type AS deviceType,
               p.backed_up AS backedUp,p.transports,p.device_name AS deviceName,
@@ -124,6 +126,19 @@ async function migrate() {
           [userId, passkey.subject],
         );
         if (!identity[0]) throw new Error(`Identity binding collision for ${passkey.subject}`);
+        if (Boolean(passkey.isPlatformAdmin)) {
+          await target.execute(
+            `INSERT IGNORE INTO sso_user_roles (user_id,role_key,source)
+             VALUES (UUID_TO_BIN(?),'platform_admin','legacy_panel')`,
+            [userId],
+          );
+        } else {
+          await target.execute(
+            `DELETE FROM sso_user_roles
+             WHERE user_id=UUID_TO_BIN(?) AND role_key='platform_admin' AND source='legacy_panel'`,
+            [userId],
+          );
+        }
         seenUsers.add(passkey.subject);
         migratedUsers += 1;
       }
