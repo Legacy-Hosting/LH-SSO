@@ -95,7 +95,9 @@ export function createOidcProvider(runtime: OidcRuntimeConfig, options: Provider
         ? {
             session: "__Host-lh_sso_session",
             interaction: "__Host-lh_sso_interaction",
-            resume: "__Host-lh_sso_resume",
+            // oidc-provider scopes this cookie to /auth/<interaction-id>.
+            // __Host- cookies require Path=/ and would be rejected by browsers.
+            resume: "__Secure-lh_sso_resume",
           }
         : {
             session: "lh_sso_session",

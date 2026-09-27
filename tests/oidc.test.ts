@@ -14,11 +14,14 @@ function signingKeys(): JWKS {
   return { keys } as JWKS;
 }
 
-function runtime(issuer = "http://127.0.0.1"): OidcRuntimeConfig {
+function runtime(
+  issuer = "http://127.0.0.1",
+  production = false,
+): OidcRuntimeConfig {
   return parseOidcRuntimeConfig({
     issuer,
     port: 0,
-    production: false,
+    production,
     cookieKeysJson: JSON.stringify(["a".repeat(32), "b".repeat(32)]),
     clientsJson: JSON.stringify([
       {
@@ -41,7 +44,9 @@ function runtime(issuer = "http://127.0.0.1"): OidcRuntimeConfig {
       },
     ]),
     jwks: signingKeys(),
-    legacyLoginUrl: "http://127.0.0.1/login",
+    legacyLoginUrl: production
+      ? "https://panel.legacyhosting.xyz/login"
+      : "http://127.0.0.1/login",
   });
 }
 
@@ -122,6 +127,52 @@ test("production OIDC configuration rejects unsafe redirects and unknown resourc
     }),
     /must use HTTPS/,
   );
+});
+
+test("production interaction cookies use browser-compatible security prefixes", async () => {
+  const provider = createOidcProvider(
+    runtime("https://auth.legacyhosting.xyz", true),
+    { adapter: false },
+  );
+  const server = provider.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const authorization = new URL(`http://127.0.0.1:${address.port}/auth`);
+  authorization.search = new URLSearchParams({
+    client_id: "test-client",
+    redirect_uri: "https://client.example/callback",
+    response_type: "code",
+    scope: "openid profile roles",
+    state: "cookie-prefix-test",
+    nonce: "cookie-prefix-test-nonce",
+    code_challenge: "a".repeat(43),
+    code_challenge_method: "S256",
+    resource: "https://hub.legacyhosting.xyz",
+  }).toString();
+
+  try {
+    const response = await fetch(authorization, {
+      redirect: "manual",
+      headers: { "x-forwarded-proto": "https" },
+    });
+    assert.equal(response.status, 303);
+    const cookies = response.headers.getSetCookie();
+    assert.ok(cookies.some((cookie) =>
+      cookie.startsWith("__Host-lh_sso_interaction=") && /path=\//i.test(cookie)
+    ));
+    assert.ok(cookies.some((cookie) =>
+      cookie.startsWith("__Secure-lh_sso_resume=") && /path=\/auth\//i.test(cookie)
+    ));
+    assert.equal(
+      cookies.some((cookie) => cookie.startsWith("__Host-lh_sso_resume=")),
+      false,
+    );
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
 });
 
 test("Authorization Code Flow requires PKCE and issues a short-lived role token", async () => {
