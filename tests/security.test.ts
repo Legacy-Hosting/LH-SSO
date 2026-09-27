@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { discordRoleSyncBody } from "../src/discord-role-sync.js";
 import { validInternalBearer } from "../src/internal-auth.js";
@@ -27,5 +28,14 @@ test("Discord can synchronize only recognized staff roles", () => {
       staffRoles: ["premium_customer"],
     }).success,
     false,
+  );
+});
+
+test("Nginx sends OIDC authorization continuations to the protocol server", () => {
+  const nginx = readFileSync("ops/nginx/auth.legacyhosting.xyz.conf", "utf8");
+  assert.match(nginx, /auth\(\?:\/\|\$\)/);
+  assert.match(
+    nginx,
+    /location ~ [^{]+auth\(\?:\/\|\$\)[^{]+\{[\s\S]*?proxy_pass http:\/\/127\.0\.0\.1:8081;/,
   );
 });
