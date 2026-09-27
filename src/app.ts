@@ -63,7 +63,7 @@ export function createApp(options: AppOptions) {
 
   app.get("/", async () => ({
     service: "LH-SSO",
-    version: "1.1.1",
+    version: "1.1.2",
     status: "operational",
   }));
 
