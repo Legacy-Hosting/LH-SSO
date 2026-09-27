@@ -3,10 +3,15 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
 import type Provider from "oidc-provider";
+import { z } from "zod";
 import { databaseStatus } from "./database/mysql.js";
 import { discordRoleSyncBody, syncDiscordRoles } from "./discord-role-sync.js";
 import { validInternalBearer } from "./internal-auth.js";
-import { consumeLoginTicket, issueLoginTicket } from "./login-ticket.js";
+import {
+  consumeLoginTicket,
+  issueLoginTicket,
+  provisionLegacyUser,
+} from "./login-ticket.js";
 
 type AppOptions = {
   internalToken: string;
@@ -16,6 +21,7 @@ type AppOptions = {
   legacyLoginUrl?: string;
   trustProxy?: boolean;
   loginTickets?: {
+    provision: typeof provisionLegacyUser;
     issue: typeof issueLoginTicket;
     consume: typeof consumeLoginTicket;
   };
@@ -26,6 +32,13 @@ const interactionParams = {
   required: ["uid"],
   properties: { uid: { type: "string", minLength: 16, maxLength: 255, pattern: "^[A-Za-z0-9_-]+$" } },
 } as const;
+
+const loginTicketBody = z.object({
+  interactionUid: z.string().regex(/^[A-Za-z0-9_-]{16,255}$/),
+  subject: z.string().uuid(),
+  email: z.string().trim().email().max(320),
+  displayName: z.string().trim().min(2).max(120),
+});
 
 function stringArray(value: unknown) {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string")
@@ -50,7 +63,7 @@ export function createApp(options: AppOptions) {
 
   app.get("/", async () => ({
     service: "LH-SSO",
-    version: "1.1.0",
+    version: "1.1.1",
     status: "operational",
   }));
 
@@ -83,6 +96,7 @@ export function createApp(options: AppOptions) {
   ) {
     const provider = options.oidcProvider;
     const tickets = options.loginTickets ?? {
+      provision: provisionLegacyUser,
       issue: issueLoginTicket,
       consume: consumeLoginTicket,
     };
@@ -92,17 +106,23 @@ export function createApp(options: AppOptions) {
       if (!validInternalBearer(request.headers.authorization, options.identityBridgeToken!)) {
         return reply.status(401).send({ error: "invalid_internal_token" });
       }
-      const body = request.body as Record<string, unknown> | null;
-      const interactionUid = typeof body?.interactionUid === "string" ? body.interactionUid : "";
-      const subject = typeof body?.subject === "string" ? body.subject : "";
-      if (
-        !/^[A-Za-z0-9_-]{16,255}$/.test(interactionUid) ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(subject)
-      ) {
-        return reply.status(400).send({ error: "validation_error" });
-      }
+      const body = loginTicketBody.safeParse(request.body);
+      if (!body.success) return reply.status(400).send({ error: "validation_error" });
+      const { interactionUid, subject } = body.data;
       if (!await provider.Interaction.find(interactionUid)) {
         return reply.status(404).send({ error: "interaction_not_found" });
+      }
+      try {
+        await tickets.provision({
+          subject,
+          email: body.data.email,
+          displayName: body.data.displayName,
+        });
+      } catch (error) {
+        if (error instanceof Error && error.message === "identity_conflict") {
+          return reply.status(409).send({ error: "identity_conflict" });
+        }
+        throw error;
       }
       const issued = await tickets.issue(interactionUid, subject);
       if (!issued) return reply.status(404).send({ error: "account_not_found" });

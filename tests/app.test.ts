@@ -16,6 +16,9 @@ test("the login ticket bridge is internal and never authenticates unknown users"
     oidcIssuer: "https://auth.legacyhosting.xyz",
     legacyLoginUrl: "https://panel.legacyhosting.xyz/login",
     loginTickets: {
+      provision: async (input) => {
+        if (input.email === "conflict@example.com") throw new Error("identity_conflict");
+      },
       issue: async (_interactionUid, subject) => subject.startsWith("123e")
         ? { ticket: "t".repeat(43), expiresIn: 60 }
         : undefined,
@@ -26,6 +29,8 @@ test("the login ticket bridge is internal and never authenticates unknown users"
     const body = {
       interactionUid: "interaction_uid_123456",
       subject: "123e4567-e89b-12d3-a456-426614174000",
+      email: "user@example.com",
+      displayName: "Example User",
     };
     const unauthorized = await app.inject({
       method: "POST",
@@ -48,6 +53,15 @@ test("the login ticket bridge is internal and never authenticates unknown users"
         completionUri: "https://auth.legacyhosting.xyz/interaction/interaction_uid_123456/complete",
       },
     });
+
+    const conflict = await app.inject({
+      method: "POST",
+      url: "/internal/oidc/login-tickets",
+      headers: { authorization: `Bearer ${bridgeToken}` },
+      payload: { ...body, email: "conflict@example.com" },
+    });
+    assert.equal(conflict.statusCode, 409);
+    assert.equal(conflict.json().error, "identity_conflict");
   } finally {
     await app.close();
   }

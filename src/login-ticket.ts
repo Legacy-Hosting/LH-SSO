@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { RowDataPacket } from "mysql2";
 import { database } from "./database/mysql.js";
 
@@ -6,6 +6,65 @@ const ticketLifetimeSeconds = 60;
 
 function ticketHash(ticket: string) {
   return createHash("sha256").update(ticket, "utf8").digest();
+}
+
+export async function provisionLegacyUser(input: {
+  subject: string;
+  email: string;
+  displayName: string;
+}) {
+  const connection = await database().getConnection();
+  try {
+    await connection.beginTransaction();
+    const email = input.email.toLowerCase();
+    const [matches] = await connection.query<(RowDataPacket & { subject: string; email: string })[]>(
+      "SELECT subject,email FROM sso_users WHERE subject=? OR email=? FOR UPDATE",
+      [input.subject, email],
+    );
+    if (matches.some((match) => match.email === email && match.subject !== input.subject)) {
+      throw new Error("identity_conflict");
+    }
+    if (matches.some((match) => match.subject === input.subject)) {
+      await connection.execute(
+        "UPDATE sso_users SET display_name=?,email=? WHERE subject=?",
+        [input.displayName, email, input.subject],
+      );
+    } else {
+      await connection.execute(
+        "INSERT INTO sso_users (id,subject,display_name,email) VALUES (UUID_TO_BIN(?),?,?,?)",
+        [randomUUID(), input.subject, input.displayName, email],
+      );
+    }
+    await connection.execute(
+      `INSERT INTO sso_identities (id,user_id,provider,provider_subject)
+       SELECT UUID_TO_BIN(?),id,'legacy_panel',subject FROM sso_users WHERE subject=?
+       ON DUPLICATE KEY UPDATE updated_at=CURRENT_TIMESTAMP(3)`,
+      [randomUUID(), input.subject],
+    );
+    const [linkedIdentities] = await connection.query<(RowDataPacket & { linked: number })[]>(
+      `SELECT 1 AS linked
+       FROM sso_identities i
+       JOIN sso_users u ON u.id=i.user_id
+       WHERE i.provider='legacy_panel' AND i.provider_subject=? AND u.subject=?
+       LIMIT 1`,
+      [input.subject, input.subject],
+    );
+    if (!linkedIdentities[0]) throw new Error("identity_conflict");
+    await connection.commit();
+  } catch (error) {
+    await connection.rollback();
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ER_DUP_ENTRY"
+    ) {
+      throw new Error("identity_conflict", { cause: error });
+    }
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 export async function issueLoginTicket(interactionUid: string, subject: string) {

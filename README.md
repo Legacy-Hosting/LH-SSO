@@ -14,7 +14,7 @@ The existing Panel login remains authoritative during the migration window. When
 2. Render an auto-submitting HTML form that POSTs the returned one-time `ticket` to `completionUri`.
 3. Never expose `LH_IDENTITY_BRIDGE_TOKEN` to the browser.
 
-Tickets expire after 60 seconds, are bound to one interaction, and can be consumed once. The bridge endpoint is restricted to the AMS3 VPC by Nginx. Remove this bridge after passkeys and account recovery have moved to SSO.
+Tickets expire after 60 seconds, are bound to one interaction, and can be consumed once. On the first successful bridge request, SSO provisions a `legacy_panel` identity whose immutable subject equals the existing API user UUID. A matching email attached to another SSO subject is rejected instead of being merged automatically. The bridge endpoint is restricted to the AMS3 VPC by Nginx. Remove this bridge after passkeys and account recovery have moved to SSO.
 
 Generate an initial two-key ES256 set directly on the SSO server:
 
