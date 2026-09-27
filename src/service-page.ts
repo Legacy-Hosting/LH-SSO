@@ -31,7 +31,7 @@ export function renderServicePage() {
 </head>
 <body>
   <main class="login-card">
-    <div class="mark">L</div>
+    <img class="mark" src="/favicon-192.png" alt="Legacy Hosting logo">
     <p class="eyebrow">Legacy Hosting SSO</p>
     <h1>One secure identity</h1>
     <p class="intro">Central passkey-protected sign-in for the Legacy Hosting control panel and staff services.</p>
