@@ -6,6 +6,23 @@ import { createApp } from "../src/app.js";
 const internalToken = "i".repeat(32);
 const bridgeToken = "b".repeat(32);
 
+test("readiness returns 503 when the database dependency is unavailable", async () => {
+  const app = createApp({
+    internalToken,
+    databaseStatus: async () => "unavailable",
+  });
+  try {
+    const response = await app.inject({ method: "GET", url: "/health" });
+    assert.equal(response.statusCode, 503);
+    assert.deepEqual(response.json(), {
+      status: "degraded",
+      database: "unavailable",
+    });
+  } finally {
+    await app.close();
+  }
+});
+
 test("the login ticket bridge is internal and never authenticates unknown users", async () => {
   const app = createApp({
     internalToken,

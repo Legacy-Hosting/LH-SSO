@@ -19,6 +19,7 @@ export const config = z
     LEGACY_DATABASE_SSL_CA: z.string().min(1).optional(),
     LEGACY_WEBAUTHN_RP_ID: z.string().min(1).optional(),
     DATABASE_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(5_000),
+    DATABASE_HEALTH_TIMEOUT_MS: z.coerce.number().int().min(500).max(10_000).default(3_000),
     LH_DISCORD_INTERNAL_TOKEN: z.string().min(32).optional(),
     LH_IDENTITY_BRIDGE_TOKEN: z.string().min(32).optional(),
     OIDC_ISSUER: z.string().url().optional(),

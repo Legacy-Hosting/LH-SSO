@@ -33,9 +33,11 @@ import {
   loginPageJavaScript,
   renderLoginPage,
 } from "./login-page.js";
+import { SSO_VERSION } from "./version.js";
 
 type AppOptions = {
   internalToken: string;
+  databaseStatus?: typeof databaseStatus;
   identityBridgeToken?: string;
   oidcProvider?: Provider;
   oidcIssuer?: string;
@@ -151,12 +153,12 @@ export function createApp(options: AppOptions) {
 
   app.get("/", async () => ({
     service: "LH-SSO",
-    version: "1.3.0",
+    version: SSO_VERSION,
     status: "operational",
   }));
 
   app.get("/health", async (_request, reply) => {
-    const database = await databaseStatus();
+    const database = await (options.databaseStatus ?? databaseStatus)();
     const healthy = database === "connected";
     return reply.status(healthy ? 200 : 503).send({
       status: healthy ? "ok" : "degraded",
