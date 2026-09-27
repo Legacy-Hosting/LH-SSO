@@ -55,10 +55,10 @@ The public issuer is `https://auth.legacyhosting.xyz`. Fastify serves health, in
 
 ## Releases
 
-Tags named `v*` publish immutable archives to `LH-Releases/LH-SSO` and checksums to its `SHA256` directory. The archive owns the SSO Nginx, environment validation, deploy, rollback, and verification scripts. Deploy on `ams3-sso-01` with:
+Tags named `v*` publish immutable archives to `LH-Releases/LH-SSO`, checksums to `SHA256`, and detached Ed25519 signatures to `SIGNATURES`. A release fails closed when `RELEASE_SIGNING_PRIVATE_KEY_B64` is unavailable. The archive owns the SSO Nginx, environment validation, deploy, rollback, and verification scripts. Deploy on `ams3-sso-01` with the SSO public key provisioned by `LH-Ops`:
 
 ```bash
-ops/scripts/deploy-release.sh ARCHIVE CHECKSUM VERSION
+ops/scripts/deploy-release.sh ARCHIVE CHECKSUM SIGNATURE VERSION
 ```
 
 The deployment requires the protected `/etc/legacy-hosting/sso.env`, the `LH-Ops` encrypted backup tooling, and `/etc/legacy-hosting/backups/sso.env` before it will run migrations.
