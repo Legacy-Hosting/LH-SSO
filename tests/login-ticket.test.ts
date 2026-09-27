@@ -51,10 +51,13 @@ test("login tickets are account-bound, short-lived, and single-use", {
       }),
       /identity_conflict/,
     );
-    const issued = await issueLoginTicket(interactionUid, subject);
+    const issued = await issueLoginTicket(interactionUid, subject, "passkey");
     assert.ok(issued);
     assert.equal(issued.expiresIn, 60);
-    assert.equal(await consumeLoginTicket(issued.ticket, interactionUid), subject);
+    assert.deepEqual(await consumeLoginTicket(issued.ticket, interactionUid), {
+      subject,
+      authenticationMethod: "passkey",
+    });
     assert.equal(await consumeLoginTicket(issued.ticket, interactionUid), undefined);
   } finally {
     await database().execute("DELETE FROM sso_users WHERE subject=?", [subject]);

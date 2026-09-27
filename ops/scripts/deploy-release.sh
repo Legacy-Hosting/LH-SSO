@@ -37,7 +37,8 @@ staging=$(mktemp -d "$base/releases/.staging-${version}.XXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
 tar -xzf "$archive" --no-same-owner --strip-components=1 -C "$staging"
 for path in package.json pnpm-lock.yaml ecosystem.config.cjs dist/src/server.js \
-  dist/src/oidc-server.js dist/src/database/migrate.js database/migrations \
+  dist/src/oidc-server.js dist/src/database/migrate.js \
+  dist/src/migrate-legacy-passkeys.js database/migrations \
   ops/nginx/auth.legacyhosting.xyz.conf ops/scripts/validate-production-env.sh; do
   if [[ ! -e "$staging/$path" ]]; then
     echo "SSO release is missing $path" >&2

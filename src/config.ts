@@ -15,6 +15,9 @@ export const config = z
     TRUST_PROXY: booleanFromString,
     DATABASE_URL: z.string().min(1).optional(),
     DATABASE_SSL_CA: z.string().min(1).optional(),
+    LEGACY_DATABASE_URL: z.string().min(1).optional(),
+    LEGACY_DATABASE_SSL_CA: z.string().min(1).optional(),
+    LEGACY_WEBAUTHN_RP_ID: z.string().min(1).optional(),
     DATABASE_CONNECT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(5_000),
     LH_DISCORD_INTERNAL_TOKEN: z.string().min(32).optional(),
     LH_IDENTITY_BRIDGE_TOKEN: z.string().min(32).optional(),
@@ -24,6 +27,10 @@ export const config = z
     OIDC_CLIENTS_JSON: z.string().min(1).optional(),
     OIDC_RESOURCES_JSON: z.string().min(1).optional(),
     OIDC_LEGACY_LOGIN_URL: z.string().url().optional(),
+    OIDC_LOGIN_MODE: z.enum(["legacy_bridge", "passkey"]).default("legacy_bridge"),
+    WEBAUTHN_RP_NAME: z.string().min(1).max(100).default("Legacy Hosting"),
+    WEBAUTHN_RP_ID: z.string().min(1).default("localhost"),
+    WEBAUTHN_ORIGIN: z.string().url().default("http://localhost:8080"),
   })
   .superRefine((value, context) => {
     if (value.PORT === value.OIDC_PORT) {
@@ -42,6 +49,22 @@ export const config = z
         path: ["LH_IDENTITY_BRIDGE_TOKEN"],
         message: "internal service tokens must be distinct",
       });
+    }
+    const legacyMigrationKeys = [
+      "LEGACY_DATABASE_URL",
+      "LEGACY_DATABASE_SSL_CA",
+      "LEGACY_WEBAUTHN_RP_ID",
+    ] as const;
+    if (legacyMigrationKeys.some((key) => value[key])) {
+      for (const key of legacyMigrationKeys) {
+        if (!value[key]) {
+          context.addIssue({
+            code: "custom",
+            path: [key],
+            message: `${key} is required when legacy passkey migration is configured`,
+          });
+        }
+      }
     }
     if (value.NODE_ENV !== "production") return;
     if (value.HOST !== "127.0.0.1") {
@@ -70,6 +93,24 @@ export const config = z
           message: `${key} is required in production`,
         });
       }
+    }
+    const webauthnOrigin = new URL(value.WEBAUTHN_ORIGIN);
+    if (webauthnOrigin.protocol !== "https:") {
+      context.addIssue({
+        code: "custom",
+        path: ["WEBAUTHN_ORIGIN"],
+        message: "WEBAUTHN_ORIGIN must use HTTPS in production",
+      });
+    }
+    if (
+      webauthnOrigin.hostname !== value.WEBAUTHN_RP_ID &&
+      !webauthnOrigin.hostname.endsWith(`.${value.WEBAUTHN_RP_ID}`)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["WEBAUTHN_RP_ID"],
+        message: "WEBAUTHN_RP_ID must be the WebAuthn origin host or a registrable parent",
+      });
     }
   })
   .parse(process.env);

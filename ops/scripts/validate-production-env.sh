@@ -16,7 +16,8 @@ set -a
 set +a
 required=(NODE_ENV HOST PORT OIDC_PORT DATABASE_URL DATABASE_SSL_CA LH_DISCORD_INTERNAL_TOKEN \
   LH_IDENTITY_BRIDGE_TOKEN OIDC_ISSUER OIDC_COOKIE_KEYS_JSON OIDC_JWKS_FILE \
-  OIDC_CLIENTS_JSON OIDC_RESOURCES_JSON OIDC_LEGACY_LOGIN_URL)
+  OIDC_CLIENTS_JSON OIDC_RESOURCES_JSON OIDC_LEGACY_LOGIN_URL OIDC_LOGIN_MODE \
+  WEBAUTHN_RP_NAME WEBAUTHN_RP_ID WEBAUTHN_ORIGIN)
 for name in "${required[@]}"; do
   if [[ -z ${!name:-} ]]; then
     echo "Missing SSO setting: $name" >&2
@@ -27,6 +28,21 @@ if [[ $NODE_ENV != production || $HOST != 127.0.0.1 ]]; then
   echo "SSO must run in production mode on 127.0.0.1" >&2
   exit 1
 fi
+if [[ $OIDC_LOGIN_MODE != legacy_bridge && $OIDC_LOGIN_MODE != passkey ]]; then
+  echo "OIDC_LOGIN_MODE must be legacy_bridge or passkey" >&2
+  exit 1
+fi
+if [[ $WEBAUTHN_ORIGIN != https://* ]]; then
+  echo "WEBAUTHN_ORIGIN must use HTTPS" >&2
+  exit 1
+fi
+webauthn_host=${WEBAUTHN_ORIGIN#https://}
+webauthn_host=${webauthn_host%%/*}
+webauthn_host=${webauthn_host%%:*}
+if [[ $webauthn_host != "$WEBAUTHN_RP_ID" && $webauthn_host != *."$WEBAUTHN_RP_ID" ]]; then
+  echo "WEBAUTHN_RP_ID must be the WebAuthn origin host or a parent domain" >&2
+  exit 1
+fi
 if [[ ! $PORT =~ ^[0-9]+$ || ! $OIDC_PORT =~ ^[0-9]+$ ]] || \
    (( PORT < 1 || PORT > 65535 || OIDC_PORT < 1 || OIDC_PORT > 65535 || PORT == OIDC_PORT )); then
   echo "Invalid or conflicting SSO ports" >&2
@@ -34,6 +50,20 @@ if [[ ! $PORT =~ ^[0-9]+$ || ! $OIDC_PORT =~ ^[0-9]+$ ]] || \
 fi
 if [[ ! -r $DATABASE_SSL_CA ]]; then
   echo "Cannot read the SSO database CA certificate" >&2
+  exit 1
+fi
+legacy_values=0
+for name in LEGACY_DATABASE_URL LEGACY_DATABASE_SSL_CA LEGACY_WEBAUTHN_RP_ID; do
+  if [[ -n ${!name:-} ]]; then
+    ((legacy_values += 1))
+  fi
+done
+if (( legacy_values != 0 && legacy_values != 3 )); then
+  echo "All LEGACY_DATABASE_URL, LEGACY_DATABASE_SSL_CA, and LEGACY_WEBAUTHN_RP_ID values must be set together" >&2
+  exit 1
+fi
+if (( legacy_values == 3 )) && [[ ! -r $LEGACY_DATABASE_SSL_CA ]]; then
+  echo "Cannot read the legacy database CA certificate" >&2
   exit 1
 fi
 if [[ ${#LH_DISCORD_INTERNAL_TOKEN} -lt 32 ]]; then

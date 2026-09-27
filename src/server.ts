@@ -17,6 +17,7 @@ const app = createApp({
   oidcProvider,
   oidcIssuer: oidcRuntime.issuer,
   legacyLoginUrl: oidcRuntime.legacyLoginUrl,
+  loginMode: config.OIDC_LOGIN_MODE,
   trustProxy: config.TRUST_PROXY,
 });
 

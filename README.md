@@ -18,6 +18,20 @@ The existing Panel login remains authoritative during the migration window. When
 
 Tickets expire after 60 seconds, are bound to one interaction, and can be consumed once. On the first successful bridge request, SSO provisions a `legacy_panel` identity whose immutable subject equals the existing API user UUID. A matching email attached to another SSO subject is rejected instead of being merged automatically. The bridge endpoint is restricted to the AMS3 VPC by Nginx. Remove this bridge after passkeys and account recovery have moved to SSO.
 
+## Passkey cutover
+
+`OIDC_LOGIN_MODE=legacy_bridge` keeps the existing Panel passkey flow as the rollback-safe default. `OIDC_LOGIN_MODE=passkey` serves the SSO-owned, same-origin passkey screen and verifies migrated credentials directly in the SSO database. Do not enable passkey mode until the dry-run and applied migration report the expected user and credential counts.
+
+The source and target WebAuthn RP IDs must match exactly; credentials cannot be moved to a different RP ID. Configure the temporary `LEGACY_DATABASE_*` values, keep both databases inside the trusted AMS3 VPC, then run:
+
+```bash
+pnpm build
+pnpm passkeys:migrate-legacy
+pnpm passkeys:migrate-legacy --apply
+```
+
+The first command performs all collision and binding checks inside a transaction and rolls it back. The applied migration is idempotent, preserves credential IDs, public keys, counters and metadata, and refuses email, identity or credential collisions. Remove the legacy database credentials from `sso.env` after the cutover has been verified. Switching `OIDC_LOGIN_MODE` back to `legacy_bridge` is the authentication rollback; it does not delete migrated credentials.
+
 Generate an initial two-key ES256 set directly on the SSO server:
 
 ```bash

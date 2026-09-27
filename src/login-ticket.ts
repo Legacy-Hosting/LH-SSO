@@ -67,7 +67,11 @@ export async function provisionLegacyUser(input: {
   }
 }
 
-export async function issueLoginTicket(interactionUid: string, subject: string) {
+export async function issueLoginTicket(
+  interactionUid: string,
+  subject: string,
+  authenticationMethod: "legacy_panel" | "passkey" = "legacy_panel",
+) {
   await database().execute(
     "DELETE FROM sso_login_tickets WHERE expires_at<=UTC_TIMESTAMP(3) OR consumed_at IS NOT NULL",
   );
@@ -81,9 +85,9 @@ export async function issueLoginTicket(interactionUid: string, subject: string) 
   const ticket = randomBytes(32).toString("base64url");
   await database().execute(
     `INSERT INTO sso_login_tickets
-       (token_hash,interaction_uid,user_id,expires_at)
-     VALUES (?,?,?,TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(3)))`,
-    [ticketHash(ticket), interactionUid, user.userId, ticketLifetimeSeconds],
+       (token_hash,interaction_uid,user_id,authentication_method,expires_at)
+     VALUES (?,?,?,?,TIMESTAMPADD(SECOND,?,UTC_TIMESTAMP(3)))`,
+    [ticketHash(ticket), interactionUid, user.userId, authenticationMethod, ticketLifetimeSeconds],
   );
   return { ticket, expiresIn: ticketLifetimeSeconds };
 }
@@ -92,8 +96,10 @@ export async function consumeLoginTicket(ticket: string, interactionUid: string)
   const connection = await database().getConnection();
   try {
     await connection.beginTransaction();
-    const [rows] = await connection.query<(RowDataPacket & { subject: string })[]>(
-      `SELECT u.subject
+    const [rows] = await connection.query<(
+      RowDataPacket & { subject: string; authenticationMethod: "legacy_panel" | "passkey" }
+    )[]>(
+      `SELECT u.subject,t.authentication_method AS authenticationMethod
        FROM sso_login_tickets t
        JOIN sso_users u ON u.id=t.user_id
        WHERE t.token_hash=? AND t.interaction_uid=? AND t.consumed_at IS NULL
@@ -101,8 +107,8 @@ export async function consumeLoginTicket(ticket: string, interactionUid: string)
        LIMIT 1 FOR UPDATE`,
       [ticketHash(ticket), interactionUid],
     );
-    const subject = rows[0]?.subject;
-    if (!subject) {
+    const login = rows[0];
+    if (!login) {
       await connection.rollback();
       return undefined;
     }
@@ -111,7 +117,7 @@ export async function consumeLoginTicket(ticket: string, interactionUid: string)
       [ticketHash(ticket)],
     );
     await connection.commit();
-    return subject;
+    return login;
   } catch (error) {
     await connection.rollback();
     throw error;
