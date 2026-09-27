@@ -19,5 +19,23 @@ module.exports = {
         PORT: 8080,
       },
     },
+    {
+      name: 'lh-sso-oidc',
+      cwd: __dirname,
+      script: 'dist/src/oidc-server.js',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '512M',
+      kill_timeout: 10000,
+      listen_timeout: 10000,
+      time: true,
+      merge_logs: true,
+      env: {
+        NODE_ENV: 'production',
+        OIDC_PORT: 8081,
+      },
+    },
   ],
 }

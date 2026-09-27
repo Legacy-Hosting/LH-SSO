@@ -7,14 +7,19 @@ test -f "$base/current-release"
 curl --fail --silent --show-error http://127.0.0.1:8080/health | \
   grep -q '"database":"connected"'
 pm2 describe lh-sso >/dev/null
+pm2 describe lh-sso-oidc >/dev/null
+curl --fail --silent --show-error http://127.0.0.1:8081/.well-known/openid-configuration | \
+  grep -q '"authorization_endpoint"'
 current_release=$(readlink -f "$base/current")
 CURRENT_RELEASE="$current_release" node <<'NODE'
 const { execFileSync } = require("node:child_process");
 const currentRelease = process.env.CURRENT_RELEASE;
-const processInfo = JSON.parse(execFileSync("pm2", ["jlist"], { encoding: "utf8" }))
-  .find((item) => item.name === "lh-sso");
-if (!processInfo?.pm2_env?.pm_exec_path?.startsWith(`${currentRelease}/`)) {
-  throw new Error(`lh-sso is not running from ${currentRelease}`);
+const processes = JSON.parse(execFileSync("pm2", ["jlist"], { encoding: "utf8" }));
+for (const name of ["lh-sso", "lh-sso-oidc"]) {
+  const processInfo = processes.find((item) => item.name === name);
+  if (!processInfo?.pm2_env?.pm_exec_path?.startsWith(`${currentRelease}/`)) {
+    throw new Error(`${name} is not running from ${currentRelease}`);
+  }
 }
 NODE
 nginx -t

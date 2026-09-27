@@ -7,7 +7,7 @@ if [[ ${EUID} -ne 0 || $# -ne 1 || ! $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-
 fi
 base=/opt/legacy-hosting/sso
 target="$base/releases/$1"
-if [[ ! -f $target/dist/src/server.js || ! -f $target/ecosystem.config.cjs ]]; then
+if [[ ! -f $target/dist/src/server.js || ! -f $target/dist/src/oidc-server.js || ! -f $target/ecosystem.config.cjs ]]; then
   echo "SSO release does not exist: $target" >&2
   exit 1
 fi
@@ -17,9 +17,12 @@ if [[ -n $current && $current == "$base/releases/"* && -d $current ]]; then
 fi
 ln -sfn "$target" "$base/current"
 pm2 delete lh-sso >/dev/null 2>&1 || true
+pm2 delete lh-sso-oidc >/dev/null 2>&1 || true
 pm2 start "$target/ecosystem.config.cjs" --update-env
 pm2 save
 curl --fail --silent --show-error --retry 10 --retry-delay 2 \
   http://127.0.0.1:8080/health | grep -q '"status":"ok"'
+curl --fail --silent --show-error --retry 10 --retry-delay 2 \
+  http://127.0.0.1:8081/.well-known/openid-configuration | grep -q '"authorization_endpoint"'
 printf '%s\n' "$1" > "$base/current-release"
 echo "LH-SSO rolled back to $1. Database migrations were left in place."

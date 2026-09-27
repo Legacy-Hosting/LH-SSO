@@ -1,12 +1,35 @@
 # Legacy Hosting SSO
 
-Central identity authority for Legacy Hosting services. This repository currently establishes the isolated SSO database, health endpoint, and authenticated Discord staff-role synchronization contract.
+Central identity authority for Legacy Hosting services. This repository owns the isolated SSO database, an OpenID Connect authorization server, health endpoint, and authenticated Discord staff-role synchronization contract.
 
 `LH-SSO` is the final source of truth for staff authorization. Discord supplies role assignments by immutable role ID, but Discord roles are not trusted directly by Hub, Panel, API, or Status.
 
 Use a separate `legacyhosting_sso` database on the existing Managed MySQL cluster. Only the API and SSO Droplets should be trusted database sources; the public Panel, Hub, Status, and Discord processes must use service APIs instead of direct database connections.
 
-The public OIDC authorization-code flow with PKCE, passkeys, client registration, key rotation, and migration of existing Panel sessions is the next identity phase. Until that phase is completed and tested, the existing Panel login remains authoritative and must not be removed.
+The OIDC server supports only Authorization Code Flow, requires PKCE for every client, uses short-lived signed access/ID tokens, rotates refresh tokens, and persists protocol state in MySQL. Clients and resource audiences are statically allowlisted; dynamic registration is disabled. Signing keys are loaded from a protected private JWKS file and the first key is active. Prepend a new key while retaining prior public keys during rotation.
+
+The existing Panel login remains authoritative during the migration window. When OIDC requests authentication, SSO redirects the browser to `OIDC_LEGACY_LOGIN_URL` with `sso_interaction` and `sso_completion_uri`. After authenticating the current user, the trusted Panel backend must:
+
+1. POST the user's SSO `subject` and `interactionUid` to `/internal/oidc/login-tickets` using `LH_IDENTITY_BRIDGE_TOKEN`.
+2. Render an auto-submitting HTML form that POSTs the returned one-time `ticket` to `completionUri`.
+3. Never expose `LH_IDENTITY_BRIDGE_TOKEN` to the browser.
+
+Tickets expire after 60 seconds, are bound to one interaction, and can be consumed once. The bridge endpoint is restricted to the AMS3 VPC by Nginx. Remove this bridge after passkeys and account recovery have moved to SSO.
+
+Generate an initial two-key ES256 set directly on the SSO server:
+
+```bash
+install -d -m 0700 /etc/legacy-hosting
+pnpm oidc:generate-keys /etc/legacy-hosting/sso-oidc-jwks.json
+```
+
+Rotate by prepending a new active key while retaining verification keys:
+
+```bash
+pnpm oidc:generate-keys /etc/legacy-hosting/sso-oidc-jwks.json --rotate
+```
+
+The public issuer is `https://auth.legacyhosting.xyz`. Fastify serves health, interactions, and authenticated internal endpoints on localhost port 8080. The OIDC protocol server listens on localhost port 8081. Nginx routes both behind the one issuer origin.
 
 ## Releases
 

@@ -1,14 +1,37 @@
+import formbody from "@fastify/formbody";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import Fastify from "fastify";
+import type Provider from "oidc-provider";
 import { databaseStatus } from "./database/mysql.js";
 import { discordRoleSyncBody, syncDiscordRoles } from "./discord-role-sync.js";
 import { validInternalBearer } from "./internal-auth.js";
+import { consumeLoginTicket, issueLoginTicket } from "./login-ticket.js";
 
 type AppOptions = {
   internalToken: string;
+  identityBridgeToken?: string;
+  oidcProvider?: Provider;
+  oidcIssuer?: string;
+  legacyLoginUrl?: string;
   trustProxy?: boolean;
+  loginTickets?: {
+    issue: typeof issueLoginTicket;
+    consume: typeof consumeLoginTicket;
+  };
 };
+
+const interactionParams = {
+  type: "object",
+  required: ["uid"],
+  properties: { uid: { type: "string", minLength: 16, maxLength: 255, pattern: "^[A-Za-z0-9_-]+$" } },
+} as const;
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) && value.every((entry) => typeof entry === "string")
+    ? value
+    : undefined;
+}
 
 export function createApp(options: AppOptions) {
   const app = Fastify({
@@ -22,11 +45,12 @@ export function createApp(options: AppOptions) {
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
   });
+  void app.register(formbody);
   void app.register(rateLimit, { max: 120, timeWindow: 60_000 });
 
   app.get("/", async () => ({
     service: "LH-SSO",
-    version: "1.0.0",
+    version: "1.1.0",
     status: "operational",
   }));
 
@@ -51,8 +75,130 @@ export function createApp(options: AppOptions) {
     return reply.status(202).send({ data: result });
   });
 
+  if (
+    options.oidcProvider &&
+    options.oidcIssuer &&
+    options.legacyLoginUrl &&
+    options.identityBridgeToken
+  ) {
+    const provider = options.oidcProvider;
+    const tickets = options.loginTickets ?? {
+      issue: issueLoginTicket,
+      consume: consumeLoginTicket,
+    };
+
+    app.post("/internal/oidc/login-tickets", async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      if (!validInternalBearer(request.headers.authorization, options.identityBridgeToken!)) {
+        return reply.status(401).send({ error: "invalid_internal_token" });
+      }
+      const body = request.body as Record<string, unknown> | null;
+      const interactionUid = typeof body?.interactionUid === "string" ? body.interactionUid : "";
+      const subject = typeof body?.subject === "string" ? body.subject : "";
+      if (
+        !/^[A-Za-z0-9_-]{16,255}$/.test(interactionUid) ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(subject)
+      ) {
+        return reply.status(400).send({ error: "validation_error" });
+      }
+      if (!await provider.Interaction.find(interactionUid)) {
+        return reply.status(404).send({ error: "interaction_not_found" });
+      }
+      const issued = await tickets.issue(interactionUid, subject);
+      if (!issued) return reply.status(404).send({ error: "account_not_found" });
+      return reply.status(201).send({
+        data: {
+          ...issued,
+          completionUri: `${options.oidcIssuer}/interaction/${interactionUid}/complete`,
+        },
+      });
+    });
+
+    app.get<{ Params: { uid: string } }>(
+      "/interaction/:uid",
+      { schema: { params: interactionParams } },
+      async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const details = await provider.interactionDetails(request.raw, reply.raw);
+        if (details.uid !== request.params.uid) {
+          return reply.status(400).send({ error: "interaction_mismatch" });
+        }
+        if (details.prompt.name === "login") {
+          const loginUrl = new URL(options.legacyLoginUrl!);
+          loginUrl.searchParams.set("sso_interaction", details.uid);
+          loginUrl.searchParams.set(
+            "sso_completion_uri",
+            `${options.oidcIssuer}/interaction/${details.uid}/complete`,
+          );
+          loginUrl.searchParams.set("sso_issuer", options.oidcIssuer!);
+          return reply.redirect(loginUrl.toString());
+        }
+        if (details.prompt.name !== "consent" || !details.session?.accountId) {
+          return reply.status(400).send({ error: "unsupported_interaction" });
+        }
+
+        let grant = details.grantId ? await provider.Grant.find(details.grantId) : undefined;
+        grant ??= new provider.Grant({
+          accountId: details.session.accountId,
+          clientId: String(details.params.client_id),
+        });
+        const missingScopes = stringArray(details.prompt.details.missingOIDCScope);
+        if (missingScopes) grant.addOIDCScope(missingScopes.join(" "));
+        const missingClaims = stringArray(details.prompt.details.missingOIDCClaims);
+        if (missingClaims) grant.addOIDCClaims(missingClaims);
+        const missingResources = details.prompt.details.missingResourceScopes;
+        if (missingResources && typeof missingResources === "object") {
+          for (const [indicator, scopes] of Object.entries(missingResources)) {
+            const values = stringArray(scopes);
+            if (values) grant.addResourceScope(indicator, values.join(" "));
+          }
+        }
+        const grantId = await grant.save();
+        reply.hijack();
+        await provider.interactionFinished(
+          request.raw,
+          reply.raw,
+          { consent: { grantId } },
+          { mergeWithLastSubmission: true },
+        );
+      },
+    );
+
+    app.post<{ Params: { uid: string } }>(
+      "/interaction/:uid/complete",
+      { schema: { params: interactionParams } },
+      async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const details = await provider.interactionDetails(request.raw, reply.raw);
+        if (details.uid !== request.params.uid || details.prompt.name !== "login") {
+          return reply.status(400).send({ error: "interaction_mismatch" });
+        }
+        const body = request.body as Record<string, unknown> | null;
+        const ticket = typeof body?.ticket === "string" ? body.ticket : "";
+        if (!/^[A-Za-z0-9_-]{43}$/.test(ticket)) {
+          return reply.status(400).send({ error: "invalid_login_ticket" });
+        }
+        const subject = await tickets.consume(ticket, request.params.uid);
+        if (!subject) return reply.status(401).send({ error: "invalid_login_ticket" });
+        reply.hijack();
+        await provider.interactionFinished(request.raw, reply.raw, {
+          login: {
+            accountId: subject,
+            acr: "urn:legacyhosting:identity:legacy-panel",
+            amr: ["legacy_panel"],
+            remember: true,
+          },
+        });
+      },
+    );
+  }
+
   app.setErrorHandler((error, request, reply) => {
     request.log.error({ err: error }, "SSO request failed");
+    if (reply.raw.headersSent) {
+      if (!reply.raw.writableEnded) reply.raw.end();
+      return;
+    }
     return reply.status(500).send({ error: "internal_server_error" });
   });
 

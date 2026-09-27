@@ -37,7 +37,7 @@ staging=$(mktemp -d "$base/releases/.staging-${version}.XXXXXX")
 trap 'rm -rf -- "$staging"' EXIT
 tar -xzf "$archive" --no-same-owner --strip-components=1 -C "$staging"
 for path in package.json pnpm-lock.yaml ecosystem.config.cjs dist/src/server.js \
-  dist/src/database/migrate.js database/migrations \
+  dist/src/oidc-server.js dist/src/database/migrate.js database/migrations \
   ops/nginx/auth.legacyhosting.xyz.conf ops/scripts/validate-production-env.sh; do
   if [[ ! -e "$staging/$path" ]]; then
     echo "SSO release is missing $path" >&2
@@ -77,6 +77,7 @@ ln -sfn "$release" "$base/current"
 
 rollback_on_error() {
   pm2 delete lh-sso >/dev/null 2>&1 || true
+  pm2 delete lh-sso-oidc >/dev/null 2>&1 || true
   if [[ -n $previous && -d $previous ]]; then
     ln -sfn "$previous" "$base/current"
     pm2 start "$previous/ecosystem.config.cjs" --update-env || true
@@ -86,10 +87,13 @@ rollback_on_error() {
 }
 trap rollback_on_error ERR
 pm2 delete lh-sso >/dev/null 2>&1 || true
+pm2 delete lh-sso-oidc >/dev/null 2>&1 || true
 pm2 start "$release/ecosystem.config.cjs" --update-env
 pm2 save
 curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused \
   http://127.0.0.1:8080/health | grep -q '"status":"ok"'
+curl --fail --silent --show-error --retry 10 --retry-delay 2 --retry-connrefused \
+  http://127.0.0.1:8081/.well-known/openid-configuration | grep -q '"authorization_endpoint"'
 install -m 0644 "$release/ops/nginx/auth.legacyhosting.xyz.conf" \
   /etc/nginx/sites-available/auth.legacyhosting.xyz.conf
 ln -sfn /etc/nginx/sites-available/auth.legacyhosting.xyz.conf \
