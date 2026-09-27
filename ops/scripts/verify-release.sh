@@ -11,6 +11,11 @@ pm2 describe lh-sso-oidc >/dev/null
 curl --fail --silent --show-error http://127.0.0.1:8081/.well-known/openid-configuration | \
   grep -q '"authorization_endpoint"'
 current_release=$(readlink -f "$base/current")
+recorded_release=$(cat "$base/current-release")
+if [[ $recorded_release != "$(basename "$current_release")" ]]; then
+  echo "SSO current-release marker does not match the current symlink" >&2
+  exit 1
+fi
 CURRENT_RELEASE="$current_release" node <<'NODE'
 const { execFileSync } = require("node:child_process");
 const currentRelease = process.env.CURRENT_RELEASE;
