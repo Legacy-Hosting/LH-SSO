@@ -50,6 +50,8 @@ jobs:
         working-directory: service
         run: |
           pnpm install --frozen-lockfile
+          bash -n ops/scripts/*.sh
+          shellcheck --severity=error ops/scripts/*.sh
           pnpm db:migrate
           pnpm test
           pnpm typecheck

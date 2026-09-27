@@ -40,6 +40,10 @@ jobs:
           node-version: 24.21.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Check operations scripts
+        run: |
+          bash -n ops/scripts/*.sh
+          shellcheck --severity=error ops/scripts/*.sh
       - run: pnpm db:migrate
       - run: pnpm test
       - run: pnpm typecheck && pnpm build
